@@ -580,6 +580,89 @@ textarea {
   border: 1px solid var(--line);
 }
 
+.software-gesture {
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--teal);
+  background: rgba(13, 129, 120, 0.05);
+}
+
+.software-gesture-heading,
+.software-gesture-controls {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.software-gesture-heading > div > span,
+.software-gesture-result span,
+.software-gesture-counts span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.software-gesture-heading h3 {
+  margin-top: 4px;
+  font-size: 1.15rem;
+}
+
+.software-gesture-controls {
+  margin-top: 16px;
+}
+
+.software-gesture-controls .toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.software-gesture-controls .toggle span {
+  margin: 0;
+}
+
+.software-axis-config {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.software-gesture-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(255, 253, 247, 0.76);
+}
+
+.software-gesture-result strong {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.software-gesture-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.software-gesture-counts article {
+  padding: 10px;
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.software-gesture-counts strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.4rem;
+}
+
 .gesture-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -984,8 +1067,19 @@ footer {
   .metric-grid,
   .gesture-grid,
   .axis-grid,
+  .software-axis-config,
+  .software-gesture-result,
   .log-controls {
     grid-template-columns: 1fr;
+  }
+
+  .software-gesture-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .software-gesture-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sensor-summary {

@@ -770,6 +770,272 @@ export function parseSensorData(body) {
   return { sequenceStart, frameCount, sampleSize, samples };
 }
 
+export const SOFTWARE_GESTURE_NAMES = Object.freeze({
+  swipe_up: "向上挥动",
+  swipe_down: "向下挥动",
+  swipe_left: "向左挥动",
+  swipe_right: "向右挥动",
+});
+
+const SENSOR_AXES = new Set(["x", "y", "z"]);
+
+export class SoftwareGestureRecognizer {
+  constructor({
+    sampleRateHz = 100,
+    calibrationSampleCount = 60,
+    startAccelThreshold = 320,
+    startGyroThreshold = 220,
+    idleAccelThreshold = 140,
+    idleGyroThreshold = 110,
+    directionThreshold = 420,
+    dominanceRatio = 1.18,
+    minimumDurationMs = 120,
+    idleDurationMs = 180,
+    maximumDurationMs = 1200,
+    cooldownMs = 500,
+    verticalAxis = "y",
+    verticalSign = 1,
+    horizontalAxis = "x",
+    horizontalSign = 1,
+  } = {}) {
+    this.calibrationSampleCount = Math.max(5, Math.round(calibrationSampleCount));
+    this.startAccelThreshold = Math.max(1, Number(startAccelThreshold));
+    this.startGyroThreshold = Math.max(1, Number(startGyroThreshold));
+    this.idleAccelThreshold = Math.max(0, Number(idleAccelThreshold));
+    this.idleGyroThreshold = Math.max(0, Number(idleGyroThreshold));
+    this.directionThreshold = Math.max(1, Number(directionThreshold));
+    this.dominanceRatio = Math.max(1, Number(dominanceRatio));
+    this.minimumDurationMs = Math.max(1, Number(minimumDurationMs));
+    this.idleDurationMs = Math.max(1, Number(idleDurationMs));
+    this.maximumDurationMs = Math.max(this.minimumDurationMs, Number(maximumDurationMs));
+    this.cooldownMs = Math.max(0, Number(cooldownMs));
+    this.setSampleRate(sampleRateHz);
+    this.setAxisMapping({
+      verticalAxis,
+      verticalSign,
+      horizontalAxis,
+      horizontalSign,
+    });
+    this.reset();
+  }
+
+  setSampleRate(sampleRateHz) {
+    this.sampleRateHz = Math.max(1, Number(sampleRateHz) || 100);
+    this.minimumSamples = Math.max(
+      2,
+      Math.round((this.sampleRateHz * this.minimumDurationMs) / 1000),
+    );
+    this.idleSamplesRequired = Math.max(
+      2,
+      Math.round((this.sampleRateHz * this.idleDurationMs) / 1000),
+    );
+    this.maximumSamples = Math.max(
+      this.minimumSamples,
+      Math.round((this.sampleRateHz * this.maximumDurationMs) / 1000),
+    );
+    this.preBufferLimit = Math.max(2, Math.round(this.sampleRateHz * 0.12));
+  }
+
+  setAxisMapping({
+    verticalAxis = this.verticalAxis,
+    verticalSign = this.verticalSign,
+    horizontalAxis = this.horizontalAxis,
+    horizontalSign = this.horizontalSign,
+  } = {}) {
+    if (!SENSOR_AXES.has(verticalAxis) || !SENSOR_AXES.has(horizontalAxis)) {
+      throw new ProtocolError("软件手势轴必须是 x、y 或 z");
+    }
+    if (verticalAxis === horizontalAxis) {
+      throw new ProtocolError("软件手势的水平轴和垂直轴不能相同");
+    }
+    this.verticalAxis = verticalAxis;
+    this.verticalSign = Number(verticalSign) < 0 ? -1 : 1;
+    this.horizontalAxis = horizontalAxis;
+    this.horizontalSign = Number(horizontalSign) < 0 ? -1 : 1;
+  }
+
+  reset() {
+    this.baseline = null;
+    this.calibrationSamples = [];
+    this.calibrating = false;
+    this.preBuffer = [];
+    this.segment = [];
+    this.active = false;
+    this.idleSamples = 0;
+    this.cooldownUntil = 0;
+  }
+
+  resetMotion() {
+    this.preBuffer = [];
+    this.segment = [];
+    this.active = false;
+    this.idleSamples = 0;
+  }
+
+  beginCalibration(sampleCount = this.calibrationSampleCount) {
+    this.calibrationSampleCount = Math.max(5, Math.round(sampleCount));
+    this.calibrationSamples = [];
+    this.calibrating = true;
+    this.baseline = null;
+    this.resetMotion();
+  }
+
+  calibrate(samples) {
+    if (!Array.isArray(samples) || samples.length < 5) {
+      throw new ProtocolError("软件手势校准至少需要 5 个 IMU 样本");
+    }
+    const totals = {
+      accelX: 0,
+      accelY: 0,
+      accelZ: 0,
+      gyroX: 0,
+      gyroY: 0,
+      gyroZ: 0,
+    };
+    for (const sample of samples) {
+      for (const key of Object.keys(totals)) totals[key] += Number(sample[key]) || 0;
+    }
+    this.baseline = Object.fromEntries(
+      Object.entries(totals).map(([key, total]) => [key, total / samples.length]),
+    );
+    this.calibrationSamples = [];
+    this.calibrating = false;
+    this.resetMotion();
+    return this.baseline;
+  }
+
+  push(sample) {
+    if (this.calibrating) {
+      this.calibrationSamples.push(sample);
+      const progress = Math.min(
+        1,
+        this.calibrationSamples.length / this.calibrationSampleCount,
+      );
+      if (this.calibrationSamples.length >= this.calibrationSampleCount) {
+        const sampleCount = this.calibrationSamples.length;
+        const baseline = this.calibrate(this.calibrationSamples);
+        return {
+          type: "calibration",
+          complete: true,
+          progress: 1,
+          baseline,
+          sampleCount,
+          timestampMs: Number(sample.timestampMs) || 0,
+        };
+      }
+      return { type: "calibration", complete: false, progress };
+    }
+    if (!this.baseline) return null;
+
+    const feature = this.#feature(sample);
+    const timestampMs = Number(sample.timestampMs) || 0;
+    if (!this.active && timestampMs < this.cooldownUntil) return null;
+
+    const moving =
+      feature.accelMagnitude >= this.startAccelThreshold ||
+      feature.gyroMagnitude >= this.startGyroThreshold;
+    const idle =
+      feature.accelMagnitude <= this.idleAccelThreshold &&
+      feature.gyroMagnitude <= this.idleGyroThreshold;
+
+    if (!this.active) {
+      this.preBuffer.push(feature);
+      if (this.preBuffer.length > this.preBufferLimit) this.preBuffer.shift();
+      if (!moving) return null;
+      this.active = true;
+      this.segment = [...this.preBuffer];
+      this.preBuffer = [];
+      this.idleSamples = 0;
+      return null;
+    }
+
+    this.segment.push(feature);
+    this.idleSamples = idle ? this.idleSamples + 1 : 0;
+    const longEnough = this.segment.length >= this.minimumSamples;
+    const endedByIdle = longEnough && this.idleSamples >= this.idleSamplesRequired;
+    const endedByLimit = this.segment.length >= this.maximumSamples;
+    if (!endedByIdle && !endedByLimit) return null;
+
+    const result = this.#classify(timestampMs);
+    this.resetMotion();
+    this.cooldownUntil = timestampMs + (result ? this.cooldownMs : Math.min(200, this.cooldownMs));
+    return result;
+  }
+
+  #feature(sample) {
+    const accel = {
+      x: (Number(sample.accelX) || 0) - this.baseline.accelX,
+      y: (Number(sample.accelY) || 0) - this.baseline.accelY,
+      z: (Number(sample.accelZ) || 0) - this.baseline.accelZ,
+    };
+    const gyro = {
+      x: (Number(sample.gyroX) || 0) - this.baseline.gyroX,
+      y: (Number(sample.gyroY) || 0) - this.baseline.gyroY,
+      z: (Number(sample.gyroZ) || 0) - this.baseline.gyroZ,
+    };
+    return {
+      timestampMs: Number(sample.timestampMs) || 0,
+      accel,
+      gyro,
+      accelMagnitude: Math.hypot(accel.x, accel.y, accel.z),
+      gyroMagnitude: Math.hypot(gyro.x, gyro.y, gyro.z),
+    };
+  }
+
+  #classify(timestampMs) {
+    const peak = {
+      x: { value: 0, magnitude: 0 },
+      y: { value: 0, magnitude: 0 },
+      z: { value: 0, magnitude: 0 },
+    };
+    for (const feature of this.segment) {
+      for (const axis of SENSOR_AXES) {
+        const value = feature.accel[axis];
+        const magnitude = Math.abs(value);
+        if (magnitude > peak[axis].magnitude) peak[axis] = { value, magnitude };
+      }
+    }
+
+    const vertical = peak[this.verticalAxis];
+    const horizontal = peak[this.horizontalAxis];
+    const strongest = Math.max(vertical.magnitude, horizontal.magnitude);
+    const secondary = Math.min(vertical.magnitude, horizontal.magnitude);
+    if (strongest < this.directionThreshold) return null;
+
+    const dominance = strongest / Math.max(1, secondary);
+    if (dominance < this.dominanceRatio) return null;
+
+    let gestureName;
+    let signedPeak;
+    if (vertical.magnitude > horizontal.magnitude) {
+      signedPeak = vertical.value * this.verticalSign;
+      gestureName = signedPeak >= 0 ? "swipe_up" : "swipe_down";
+    } else {
+      signedPeak = horizontal.value * this.horizontalSign;
+      gestureName = signedPeak >= 0 ? "swipe_right" : "swipe_left";
+    }
+
+    const amplitudeScore = Math.min(
+      1,
+      (strongest - this.directionThreshold) / Math.max(1, this.directionThreshold * 1.5),
+    );
+    const dominanceScore = Math.min(1, (dominance - 1) / 1.5);
+    return {
+      type: "gesture",
+      gestureName,
+      label: SOFTWARE_GESTURE_NAMES[gestureName],
+      confidence: Math.max(0.05, Math.min(1, amplitudeScore * 0.65 + dominanceScore * 0.35)),
+      timestampMs,
+      durationMs:
+        this.segment.at(-1).timestampMs - this.segment[0].timestampMs,
+      peak: signedPeak,
+      axis: vertical.magnitude > horizontal.magnitude
+        ? this.verticalAxis
+        : this.horizontalAxis,
+    };
+  }
+}
+
 export function parseTimestampEvent(body) {
   const reader = new BinaryReader(body);
   const timestampMs = reader.u32();

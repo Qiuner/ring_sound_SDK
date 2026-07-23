@@ -4,6 +4,7 @@ import {
   BinaryWriter,
   Commands,
   PacketStream,
+  SoftwareGestureRecognizer,
   crc16Compute,
   decodePacket,
   downloadAudioQuick,
@@ -102,4 +103,93 @@ test("quick audio download assembles consecutive frames", async () => {
   const result = await downloadAudioQuick(client, 2);
   assert.equal(result.info.recordTime, 123);
   assert.deepEqual(result.data, Uint8Array.from([1, 2, 3, 4, 5]));
+});
+
+function imuSample(timestampMs, {
+  accelX = 0,
+  accelY = 0,
+  accelZ = 2048,
+  gyroX = 0,
+  gyroY = 0,
+  gyroZ = 0,
+} = {}) {
+  return { timestampMs, accelX, accelY, accelZ, gyroX, gyroY, gyroZ };
+}
+
+function recognizeSoftwareGesture(axis, value) {
+  const recognizer = new SoftwareGestureRecognizer({
+    sampleRateHz: 100,
+    startAccelThreshold: 200,
+    startGyroThreshold: 200,
+    idleAccelThreshold: 80,
+    idleGyroThreshold: 80,
+    directionThreshold: 300,
+    dominanceRatio: 1.1,
+    minimumDurationMs: 30,
+    idleDurationMs: 30,
+    cooldownMs: 0,
+  });
+  recognizer.calibrate(
+    Array.from({ length: 10 }, (_, index) => imuSample(index * 10)),
+  );
+
+  let result = null;
+  let timestampMs = 100;
+  for (let index = 0; index < 3; index += 1) {
+    result ||= recognizer.push(imuSample(timestampMs));
+    timestampMs += 10;
+  }
+  for (let index = 0; index < 5; index += 1) {
+    const values = axis === "x" ? { accelX: value } : { accelY: value };
+    result ||= recognizer.push(imuSample(timestampMs, values));
+    timestampMs += 10;
+  }
+  for (let index = 0; index < 5; index += 1) {
+    result ||= recognizer.push(imuSample(timestampMs));
+    timestampMs += 10;
+  }
+  return result;
+}
+
+test("software gesture recognizer detects calibrated up and left swipes", () => {
+  const up = recognizeSoftwareGesture("y", 800);
+  assert.equal(up?.type, "gesture");
+  assert.equal(up?.gestureName, "swipe_up");
+  assert.equal(up?.axis, "y");
+
+  const left = recognizeSoftwareGesture("x", -900);
+  assert.equal(left?.type, "gesture");
+  assert.equal(left?.gestureName, "swipe_left");
+  assert.equal(left?.axis, "x");
+});
+
+test("software gesture recognizer rejects weak motion", () => {
+  const result = recognizeSoftwareGesture("y", 100);
+  assert.equal(result, null);
+});
+
+test("software gesture calibration reports completion metadata", () => {
+  const recognizer = new SoftwareGestureRecognizer({
+    calibrationSampleCount: 5,
+  });
+  recognizer.beginCalibration();
+  let result = null;
+  for (let index = 0; index < 5; index += 1) {
+    result = recognizer.push(
+      imuSample(index * 10, {
+        accelX: 10,
+        accelY: 20,
+        accelZ: 2000,
+        gyroX: 1,
+        gyroY: 2,
+        gyroZ: 3,
+      }),
+    );
+  }
+  assert.equal(result?.type, "calibration");
+  assert.equal(result?.complete, true);
+  assert.equal(result?.sampleCount, 5);
+  assert.equal(result?.timestampMs, 40);
+  assert.equal(result?.baseline.accelZ, 2000);
+  assert.equal(result?.baseline.gyroY, 2);
 });

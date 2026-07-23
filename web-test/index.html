@@ -147,6 +147,67 @@
             <span id="sensorRate">采样率 --</span>
             <span id="sensorRange">量程 --</span>
           </div>
+          <section class="software-gesture" aria-labelledby="softwareGestureTitle">
+            <div class="software-gesture-heading">
+              <div>
+                <span>PC 本地识别</span>
+                <h3 id="softwareGestureTitle">上下左右挥动</h3>
+              </div>
+              <span id="softwareGestureStatus" class="badge">未校准</span>
+            </div>
+            <div class="software-gesture-controls">
+              <button id="calibrateGestureButton" class="button compact" disabled>
+                校准静止姿态
+              </button>
+              <label class="toggle">
+                <input id="softwareGestureToggle" type="checkbox" disabled />
+                <span>启用软件识别</span>
+              </label>
+            </div>
+            <div class="software-axis-config">
+              <label>
+                <span>垂直方向</span>
+                <select id="softwareVerticalAxis">
+                  <option value="y:1">+Y 为向上</option>
+                  <option value="y:-1">-Y 为向上</option>
+                  <option value="x:1">+X 为向上</option>
+                  <option value="x:-1">-X 为向上</option>
+                  <option value="z:1">+Z 为向上</option>
+                  <option value="z:-1">-Z 为向上</option>
+                </select>
+              </label>
+              <label>
+                <span>水平方向</span>
+                <select id="softwareHorizontalAxis">
+                  <option value="x:1">+X 为向右</option>
+                  <option value="x:-1">-X 为向右</option>
+                  <option value="y:1">+Y 为向右</option>
+                  <option value="y:-1">-Y 为向右</option>
+                  <option value="z:1">+Z 为向右</option>
+                  <option value="z:-1">-Z 为向右</option>
+                </select>
+              </label>
+            </div>
+            <p id="softwareGestureProgress" class="muted">
+              开启 IMU 后保持戒指静止并校准
+            </p>
+            <div class="software-gesture-result">
+              <div>
+                <span>最近识别</span>
+                <strong id="softwareGestureLatest">--</strong>
+              </div>
+              <div>
+                <span>置信度 / 时长 / 主轴</span>
+                <strong id="softwareGestureConfidence">--</strong>
+              </div>
+            </div>
+            <div class="software-gesture-counts">
+              <article><span>上</span><strong id="softwareUpCount">0</strong></article>
+              <article><span>下</span><strong id="softwareDownCount">0</strong></article>
+              <article><span>左</span><strong id="softwareLeftCount">0</strong></article>
+              <article><span>右</span><strong id="softwareRightCount">0</strong></article>
+            </div>
+          </section>
           <div class="gesture-grid">
             <article>
               <span>向后旋转次数</span>

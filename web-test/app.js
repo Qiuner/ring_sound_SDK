@@ -2,6 +2,7 @@ import {
   COMMAND_NAMES,
   Commands,
   RingWebClient,
+  SoftwareGestureRecognizer,
   clearAudioFiles,
   downloadAudioQuick,
   getAudioFileCount,
@@ -19,6 +20,7 @@ import {
 
 const $ = (id) => document.getElementById(id);
 const client = new RingWebClient();
+const softwareGestureRecognizer = new SoftwareGestureRecognizer();
 const connectedControls = [
   "disconnectButton",
   "infoButton",
@@ -37,6 +39,13 @@ let errorRecords = [];
 let toastTimer = null;
 let sensorHistory = [];
 let ringActionHistory = [];
+let softwareGestureEnabled = false;
+const softwareGestureStats = {
+  swipe_up: { count: 0, countId: "softwareUpCount" },
+  swipe_down: { count: 0, countId: "softwareDownCount" },
+  swipe_left: { count: 0, countId: "softwareLeftCount" },
+  swipe_right: { count: 0, countId: "softwareRightCount" },
+};
 const gestureStats = {
   rotate_back: {
     count: 0,
@@ -111,8 +120,22 @@ function resetSensorView() {
   $("lastDoubleTapAt").textContent = "--";
   sensorHistory = [];
   ringActionHistory = [];
+  softwareGestureEnabled = false;
+  softwareGestureRecognizer.reset();
   renderSensorEvents();
   renderRingActions();
+  $("softwareGestureToggle").checked = false;
+  $("softwareGestureToggle").disabled = true;
+  $("calibrateGestureButton").disabled = true;
+  $("softwareGestureStatus").textContent = "未校准";
+  $("softwareGestureStatus").classList.remove("active");
+  $("softwareGestureProgress").textContent = "开启 IMU 后保持戒指静止并校准";
+  $("softwareGestureLatest").textContent = "--";
+  $("softwareGestureConfidence").textContent = "--";
+  for (const stat of Object.values(softwareGestureStats)) {
+    stat.count = 0;
+    $(stat.countId).textContent = "0";
+  }
   for (const stat of Object.values(gestureStats)) {
     stat.count = 0;
     $(stat.countId).textContent = "0";
@@ -350,11 +373,68 @@ function renderRingActions() {
       hour12: false,
     });
     const command = document.createElement("code");
-    command.textContent = `0x${record.command.toString(16).padStart(4, "0")}`;
+    command.textContent =
+      typeof record.command === "number"
+        ? `0x${record.command.toString(16).padStart(4, "0")}`
+        : String(record.command);
     const text = document.createElement("span");
     text.textContent = record.detail ? `${record.label} / ${record.detail}` : record.label;
     item.append(time, command, text);
     list.append(item);
+  }
+}
+
+function recordSoftwareGesture(result) {
+  const stat = softwareGestureStats[result.gestureName];
+  if (stat) {
+    stat.count += 1;
+    $(stat.countId).textContent = String(stat.count);
+  }
+  const confidence = Math.round(result.confidence * 100);
+  $("softwareGestureLatest").textContent = result.label;
+  $("softwareGestureConfidence").textContent =
+    `${confidence}% / ${result.durationMs} ms / ${result.axis.toUpperCase()}轴`;
+  pushSensorEvent(
+    "LOCAL",
+    `${result.label}, confidence=${confidence}%, duration=${result.durationMs}ms`,
+  );
+  pushRingAction(
+    "LOCAL",
+    `软件手势：${result.label}`,
+    `置信度 ${confidence}% / 设备时间 ${result.timestampMs} ms`,
+  );
+}
+
+function handleSoftwareGestureSample(sample) {
+  if (!softwareGestureRecognizer.calibrating && !softwareGestureEnabled) return;
+  const result = softwareGestureRecognizer.push(sample);
+  if (!result) return;
+  if (result.type === "calibration") {
+    const percent = Math.round(result.progress * 100);
+    $("softwareGestureProgress").textContent = result.complete
+      ? "校准完成，可以启用软件识别"
+      : `校准中 ${percent}%：请保持戒指静止`;
+    if (result.complete) {
+      $("softwareGestureStatus").textContent = "已校准";
+      $("softwareGestureStatus").classList.add("active");
+      $("softwareGestureToggle").disabled = false;
+      $("calibrateGestureButton").disabled = false;
+      const baseline = result.baseline;
+      pushRingAction(
+        "LOCAL",
+        "静止姿态校准完成",
+        `样本 ${result.sampleCount} / 设备时间 ${result.timestampMs} ms / ` +
+          `ACC基线 (${Math.round(baseline.accelX)}, ${Math.round(baseline.accelY)}, ` +
+          `${Math.round(baseline.accelZ)}) / GYRO基线 (` +
+          `${Math.round(baseline.gyroX)}, ${Math.round(baseline.gyroY)}, ` +
+          `${Math.round(baseline.gyroZ)})`,
+      );
+      showToast("软件手势方向基线校准完成");
+    }
+    return;
+  }
+  if (result.type === "gesture" && softwareGestureEnabled) {
+    recordSoftwareGesture(result);
   }
 }
 
@@ -377,6 +457,7 @@ function handlePacket(packet) {
       $("latestFrameText").textContent = summary;
       $("lastReceiveAt").textContent = formatClock(Date.now());
       pushSensorEvent("0605", summary);
+      for (const current of batch.samples) handleSoftwareGestureSample(current);
       return;
     }
     if (packet.command === Commands.GESTURE) {
@@ -568,6 +649,10 @@ $("startSensorButton").addEventListener("click", () =>
         `ACC ±${info.accelRangeG} g / GYRO ±${info.gyroRangeDps} dps`;
       $("sensorBadge").classList.add("active");
       $("sensorBadge").textContent = "实时上报";
+      softwareGestureRecognizer.setSampleRate(info.sampleRateHz);
+      softwareGestureRecognizer.reset();
+      $("calibrateGestureButton").disabled = false;
+      $("softwareGestureProgress").textContent = "保持戒指静止，然后点击校准";
       showToast("IMU 实时上报已开启");
     },
     "开启中...",
@@ -586,6 +671,14 @@ $("stopSensorButton").addEventListener("click", () =>
       await stopSensorReport(client);
       $("sensorBadge").classList.remove("active");
       $("sensorBadge").textContent = "未开启";
+      softwareGestureEnabled = false;
+      softwareGestureRecognizer.reset();
+      $("softwareGestureToggle").checked = false;
+      $("softwareGestureToggle").disabled = true;
+      $("calibrateGestureButton").disabled = true;
+      $("softwareGestureStatus").textContent = "未校准";
+      $("softwareGestureStatus").classList.remove("active");
+      $("softwareGestureProgress").textContent = "开启 IMU 后保持戒指静止并校准";
       showToast("IMU 实时上报已停止");
     },
     "停止中...",
@@ -596,6 +689,55 @@ $("stopSensorButton").addEventListener("click", () =>
     })
     .catch(() => {}),
 );
+
+$("calibrateGestureButton").addEventListener("click", () => {
+  softwareGestureEnabled = false;
+  $("softwareGestureToggle").checked = false;
+  $("softwareGestureToggle").disabled = true;
+  $("calibrateGestureButton").disabled = true;
+  $("softwareGestureStatus").textContent = "校准中";
+  $("softwareGestureStatus").classList.remove("active");
+  const sampleCount = Math.max(30, Math.round(softwareGestureRecognizer.sampleRateHz * 0.8));
+  softwareGestureRecognizer.beginCalibration(sampleCount);
+  $("softwareGestureProgress").textContent = `校准中 0%：请保持戒指静止`;
+});
+
+$("softwareGestureToggle").addEventListener("change", (event) => {
+  if (event.target.checked && !softwareGestureRecognizer.baseline) {
+    event.target.checked = false;
+    showToast("请先保持戒指静止并完成校准", true);
+    return;
+  }
+  softwareGestureEnabled = event.target.checked;
+  softwareGestureRecognizer.resetMotion();
+  $("softwareGestureStatus").textContent = softwareGestureEnabled ? "识别中" : "已校准";
+  $("softwareGestureStatus").classList.toggle("active", softwareGestureEnabled);
+  showToast(`软件手势识别已${softwareGestureEnabled ? "开启" : "暂停"}`);
+});
+
+function applySoftwareGestureAxisMapping() {
+  const [verticalAxis, verticalSign] = $("softwareVerticalAxis").value.split(":");
+  const [horizontalAxis, horizontalSign] = $("softwareHorizontalAxis").value.split(":");
+  try {
+    softwareGestureRecognizer.setAxisMapping({
+      verticalAxis,
+      verticalSign: Number(verticalSign),
+      horizontalAxis,
+      horizontalSign: Number(horizontalSign),
+    });
+    softwareGestureRecognizer.resetMotion();
+    logSystem(
+      `软件手势方向映射：上=${verticalSign === "1" ? "+" : "-"}${verticalAxis.toUpperCase()}，` +
+      `右=${horizontalSign === "1" ? "+" : "-"}${horizontalAxis.toUpperCase()}`,
+    );
+  } catch (error) {
+    recordError(error, "软件手势方向映射");
+    showToast(error.message, true);
+  }
+}
+
+$("softwareVerticalAxis").addEventListener("change", applySoftwareGestureAxisMapping);
+$("softwareHorizontalAxis").addEventListener("change", applySoftwareGestureAxisMapping);
 
 $("logStorageButton").addEventListener("click", () =>
   runAction(
