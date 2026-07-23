@@ -240,6 +240,28 @@
           </div>
           <button id="readLogButton" class="button wide" disabled>读取日志块</button>
           <textarea id="logOutput" readonly placeholder="日志内容会显示在这里"></textarea>
+          <section class="ring-actions" aria-labelledby="ringActionsTitle">
+            <div class="ring-actions-heading">
+              <div>
+                <span>戒指事件</span>
+                <h3 id="ringActionsTitle">用户动作记录</h3>
+              </div>
+              <strong id="ringActionCount">0</strong>
+            </div>
+            <div class="latest-ring-action">
+              <div>
+                <span>最近事件</span>
+                <strong id="latestRingAction">--</strong>
+              </div>
+              <div>
+                <span>接收时间</span>
+                <strong id="latestRingActionTime">--</strong>
+              </div>
+            </div>
+            <ol id="ringActionList" class="ring-action-list">
+              <li class="empty">等待双击、按键或手势事件</li>
+            </ol>
+          </section>
         </section>
       </div>
 

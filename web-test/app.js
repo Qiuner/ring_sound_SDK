@@ -36,6 +36,7 @@ let consoleLines = [];
 let errorRecords = [];
 let toastTimer = null;
 let sensorHistory = [];
+let ringActionHistory = [];
 const gestureStats = {
   rotate_back: {
     count: 0,
@@ -109,7 +110,9 @@ function resetSensorView() {
   $("lastReceiveAt").textContent = "--";
   $("lastDoubleTapAt").textContent = "--";
   sensorHistory = [];
+  ringActionHistory = [];
   renderSensorEvents();
+  renderRingActions();
   for (const stat of Object.values(gestureStats)) {
     stat.count = 0;
     $(stat.countId).textContent = "0";
@@ -317,6 +320,44 @@ function recordGesture(gestureName, timestampMs) {
   $(stat.lastId).textContent = `${timestampMs} ms`;
 }
 
+function pushRingAction(command, label, detail, occurredAt = Date.now()) {
+  ringActionHistory.unshift({ command, label, detail, occurredAt });
+  ringActionHistory = ringActionHistory.slice(0, 20);
+  renderRingActions();
+}
+
+function renderRingActions() {
+  const list = $("ringActionList");
+  $("ringActionCount").textContent = String(ringActionHistory.length);
+  list.replaceChildren();
+  if (!ringActionHistory.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "等待双击、按键或手势事件";
+    list.append(empty);
+    $("latestRingAction").textContent = "--";
+    $("latestRingActionTime").textContent = "--";
+    return;
+  }
+
+  const latest = ringActionHistory[0];
+  $("latestRingAction").textContent = latest.label;
+  $("latestRingActionTime").textContent = formatClock(latest.occurredAt);
+  for (const record of ringActionHistory) {
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    time.textContent = new Date(record.occurredAt).toLocaleTimeString("zh-CN", {
+      hour12: false,
+    });
+    const command = document.createElement("code");
+    command.textContent = `0x${record.command.toString(16).padStart(4, "0")}`;
+    const text = document.createElement("span");
+    text.textContent = record.detail ? `${record.label} / ${record.detail}` : record.label;
+    item.append(time, command, text);
+    list.append(item);
+  }
+}
+
 function handlePacket(packet) {
   try {
     if (packet.command === Commands.SENSOR_DATA) {
@@ -342,6 +383,11 @@ function handlePacket(packet) {
       const event = parseGestureEvent(packet.body);
       recordGesture(event.gestureName, event.timestampMs);
       pushSensorEvent("0702", `${event.gestureName} / ${event.timestampMs} ms`);
+      pushRingAction(
+        packet.command,
+        `HMM 手势：${event.gestureName}`,
+        `设备时间 ${event.timestampMs} ms`,
+      );
       return;
     }
     const eventLabels = {
@@ -357,6 +403,11 @@ function handlePacket(packet) {
       pushSensorEvent(
         `0x${packet.command.toString(16).padStart(4, "0")}`,
         `${eventLabels[packet.command]} / ${event.timestampMs} ms`,
+      );
+      pushRingAction(
+        packet.command,
+        eventLabels[packet.command],
+        `设备时间 ${event.timestampMs} ms`,
       );
     }
   } catch (error) {
