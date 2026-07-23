@@ -7,3 +7,6 @@ Thumbs.db
 .vscode/
 node_modules/
 demo.apk
+.venv/
+venv/
+*.egg-info/
