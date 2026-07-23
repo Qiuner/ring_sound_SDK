@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2eadc" />
+    <title>Ring Sound Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">BLE / PROTOCOL V4 / WEB CONSOLE</p>
+        <h1>Ring Sound <span>Lab</span></h1>
+        <p class="lede">语音戒指浏览器测试台</p>
+      </div>
+      <div class="connection-panel">
+        <div class="status-line">
+          <span id="statusDot" class="status-dot"></span>
+          <strong id="statusText">未连接</strong>
+        </div>
+        <p id="deviceName">等待选择设备</p>
+        <div class="button-row">
+          <button id="connectButton" class="button primary">连接戒指</button>
+          <button id="disconnectButton" class="button ghost" disabled>断开</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="browserWarning" class="browser-warning" hidden>
+        当前浏览器没有 Web Bluetooth。请使用支持该能力的桌面 Chrome 或 Edge，并通过
+        <code>http://localhost</code> 打开本页面。
+      </section>
+
+      <section class="quick-strip">
+        <div>
+          <span>Service</span>
+          <code>6E400001-B5A3-F393-E0A9-E50E24DCCA9E</code>
+        </div>
+        <label>
+          <span>连接方式</span>
+          <select id="connectionMode">
+            <option value="bridge">本地桥接 / MAC + RSSI</option>
+            <option value="web">浏览器直连 / ring 列表</option>
+          </select>
+        </label>
+        <label>
+          <span>写入分片</span>
+          <select id="chunkSize">
+            <option value="20">20 bytes / 兼容</option>
+            <option value="64">64 bytes</option>
+            <option value="180">180 bytes</option>
+          </select>
+        </label>
+        <label class="toggle">
+          <input id="timeSyncToggle" type="checkbox" checked />
+          <span>自动校时</span>
+        </label>
+      </section>
+
+      <section id="nearbyPanel" class="panel nearby-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-index">00 / DISCOVERY</p>
+            <h2>附近戒指</h2>
+          </div>
+          <div class="button-row">
+            <label class="scan-options">
+              <input id="targetOnlyToggle" type="checkbox" checked />
+              <span>仅目标服务</span>
+            </label>
+            <button id="scanButton" class="button compact">扫描 5 秒</button>
+          </div>
+        </div>
+        <p id="bridgeHint" class="panel-note">
+          本地桥接通过 Python SDK 扫描，可显示真实 MAC 地址、RSSI 和广播服务。
+        </p>
+        <div id="nearbyList" class="nearby-list">
+          <div class="nearby-empty">点击“扫描 5 秒”查找广播中的戒指</div>
+        </div>
+      </section>
+
+      <div class="dashboard-grid">
+        <section class="panel device-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-index">01 / DEVICE</p>
+              <h2>设备状态</h2>
+            </div>
+            <button id="infoButton" class="button compact" disabled>刷新信息</button>
+          </div>
+          <div class="metric-grid">
+            <article>
+              <span>电量</span>
+              <strong id="batteryValue">--</strong>
+              <small id="chargingValue">未知</small>
+            </article>
+            <article>
+              <span>可用存储</span>
+              <strong id="storageValue">--</strong>
+              <small id="storageTotal">总容量 --</small>
+            </article>
+          </div>
+          <dl class="detail-list">
+            <div><dt>固件</dt><dd id="firmwareValue">--</dd></div>
+            <div><dt>型号</dt><dd id="modelValue">--</dd></div>
+            <div><dt>SN</dt><dd id="snValue">--</dd></div>
+            <div><dt>CPUID</dt><dd id="cpuidValue">--</dd></div>
+            <div><dt>设备时间</dt><dd id="systemTimeValue">--</dd></div>
+          </dl>
+        </section>
+
+        <section class="panel audio-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-index">02 / AUDIO</p>
+              <h2>录音文件</h2>
+            </div>
+            <button id="audioCountButton" class="button compact" disabled>查询数量</button>
+          </div>
+          <div class="audio-count">
+            <span>设备内录音</span>
+            <strong id="audioCountValue">--</strong>
+            <span>条</span>
+          </div>
+          <div class="form-row">
+            <label>
+              <span>文件索引</span>
+              <input id="audioIndex" type="number" min="0" value="0" />
+            </label>
+            <button id="downloadAudioButton" class="button primary" disabled>
+              Quick 下载
+            </button>
+          </div>
+          <button id="receiveAudioButton" class="button wide" disabled>
+            等待录音完成后的自动上报
+          </button>
+          <div class="progress-shell" aria-label="录音下载进度">
+            <div id="audioProgress" class="progress-bar"></div>
+          </div>
+          <p id="audioProgressText" class="muted">尚未开始传输</p>
+          <div id="audioResult" class="download-result" hidden>
+            <div>
+              <strong id="audioFileName">recording.bin</strong>
+              <small id="audioMeta"></small>
+            </div>
+            <button id="saveAudioButton" class="button compact">保存 BIN</button>
+          </div>
+          <button id="clearAudioButton" class="danger-link" disabled>
+            清空设备全部录音
+          </button>
+        </section>
+
+        <section class="panel sensor-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-index">03 / MOTION</p>
+              <h2>六轴与手势</h2>
+            </div>
+            <span id="sensorBadge" class="badge">未开启</span>
+          </div>
+          <p class="panel-note">
+            先单击戒指切换到手势模式，再开启实时 IMU。协议无法主动查询当前模式。
+          </p>
+          <div class="button-row">
+            <button id="startSensorButton" class="button primary" disabled>
+              开启 IMU
+            </button>
+            <button id="stopSensorButton" class="button ghost" disabled>
+              停止 IMU
+            </button>
+          </div>
+          <div class="sensor-config">
+            <span id="sensorRate">采样率 --</span>
+            <span id="sensorRange">量程 --</span>
+          </div>
+          <div class="axis-grid">
+            <article>
+              <span>ACCEL</span>
+              <strong id="accelValue">-- / -- / --</strong>
+            </article>
+            <article>
+              <span>GYRO</span>
+              <strong id="gyroValue">-- / -- / --</strong>
+            </article>
+          </div>
+          <div class="sequence-line">
+            <span>Sequence</span>
+            <strong id="sequenceValue">--</strong>
+            <span>Timestamp</span>
+            <strong id="sensorTimestamp">--</strong>
+          </div>
+          <div>
+            <h3>事件流</h3>
+            <ol id="eventList" class="event-list">
+              <li class="empty">等待按键或手势事件</li>
+            </ol>
+          </div>
+        </section>
+
+        <section class="panel log-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-index">04 / LOG</p>
+              <h2>设备日志</h2>
+            </div>
+            <button id="logStorageButton" class="button compact" disabled>
+              查询空间
+            </button>
+          </div>
+          <p id="logStorageValue" class="muted">日志空间尚未查询</p>
+          <div class="log-controls">
+            <label><span>索引</span><input id="logIndex" type="number" min="0" value="0" /></label>
+            <label><span>偏移</span><input id="logOffset" type="number" min="0" value="0" /></label>
+            <label><span>长度</span><input id="logSize" type="number" min="1" max="4096" value="512" /></label>
+          </div>
+          <button id="readLogButton" class="button wide" disabled>读取日志块</button>
+          <textarea id="logOutput" readonly placeholder="日志内容会显示在这里"></textarea>
+        </section>
+      </div>
+
+      <section class="panel console-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-index">05 / WIRE</p>
+            <h2>协议控制台</h2>
+          </div>
+          <div class="button-row">
+            <button id="exportConsoleButton" class="button compact">导出</button>
+            <button id="clearConsoleButton" class="button compact ghost">清空</button>
+          </div>
+        </div>
+        <div class="diagnostic-heading">
+          <div>
+            <h3>错误诊断 <span id="errorCount" class="error-count">0</span></h3>
+            <p class="muted">连接、协议解析、设备错误和未捕获异常都会记录在这里。</p>
+          </div>
+          <div class="button-row">
+            <button id="copyErrorsButton" class="button compact">复制错误</button>
+            <button id="clearErrorsButton" class="button compact ghost">清空错误</button>
+          </div>
+        </div>
+        <div id="errorList" class="error-list">
+          <div class="error-empty">当前没有错误记录</div>
+        </div>
+        <div id="protocolConsole" class="protocol-console" role="log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Ring Sound SDK 0.3.4</span>
+      <span>Web Bluetooth test bench</span>
+    </footer>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
