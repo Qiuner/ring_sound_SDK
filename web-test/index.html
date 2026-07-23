@@ -40,13 +40,6 @@
           <code>6E400001-B5A3-F393-E0A9-E50E24DCCA9E</code>
         </div>
         <label>
-          <span>连接方式</span>
-          <select id="connectionMode">
-            <option value="bridge">本地桥接 / MAC + RSSI</option>
-            <option value="web">浏览器直连 / ring 列表</option>
-          </select>
-        </label>
-        <label>
           <span>写入分片</span>
           <select id="chunkSize">
             <option value="20">20 bytes / 兼容</option>
@@ -58,28 +51,6 @@
           <input id="timeSyncToggle" type="checkbox" checked />
           <span>自动校时</span>
         </label>
-      </section>
-
-      <section id="nearbyPanel" class="panel nearby-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="panel-index">00 / DISCOVERY</p>
-            <h2>附近戒指</h2>
-          </div>
-          <div class="button-row">
-            <label class="scan-options">
-              <input id="targetOnlyToggle" type="checkbox" checked />
-              <span>仅目标服务</span>
-            </label>
-            <button id="scanButton" class="button compact">扫描 5 秒</button>
-          </div>
-        </div>
-        <p id="bridgeHint" class="panel-note">
-          本地桥接通过 Python SDK 扫描，可显示真实 MAC 地址、RSSI 和广播服务。
-        </p>
-        <div id="nearbyList" class="nearby-list">
-          <div class="nearby-empty">点击“扫描 5 秒”查找广播中的戒指</div>
-        </div>
       </section>
 
       <div class="dashboard-grid">
@@ -176,6 +147,38 @@
             <span id="sensorRate">采样率 --</span>
             <span id="sensorRange">量程 --</span>
           </div>
+          <div class="gesture-grid">
+            <article>
+              <span>向后旋转次数</span>
+              <strong id="rotateBackCount">0</strong>
+              <small id="rotateBackTime">--</small>
+            </article>
+            <article>
+              <span>最近向后旋转</span>
+              <strong id="rotateBackLast">--</strong>
+              <small>gesture_id=1</small>
+            </article>
+            <article>
+              <span>向前旋转次数</span>
+              <strong id="rotateFrontCount">0</strong>
+              <small id="rotateFrontTime">--</small>
+            </article>
+            <article>
+              <span>最近向前旋转</span>
+              <strong id="rotateFrontLast">--</strong>
+              <small>gesture_id=2</small>
+            </article>
+            <article>
+              <span>挥手次数</span>
+              <strong id="waveCount">0</strong>
+              <small id="waveTime">--</small>
+            </article>
+            <article>
+              <span>最近挥手</span>
+              <strong id="waveLast">--</strong>
+              <small>gesture_id=3</small>
+            </article>
+          </div>
           <div class="axis-grid">
             <article>
               <span>ACCEL</span>
@@ -192,10 +195,29 @@
             <span>Timestamp</span>
             <strong id="sensorTimestamp">--</strong>
           </div>
-          <div>
-            <h3>事件流</h3>
+          <div class="sensor-summary">
+            <div class="summary-card">
+              <h3>最新帧</h3>
+              <p id="latestFrameText">等待 0x0605 六轴帧</p>
+            </div>
+            <div class="summary-card summary-meta">
+              <div>
+                <span>最后接收</span>
+                <strong id="lastReceiveAt">--</strong>
+              </div>
+              <div>
+                <span>最近双击</span>
+                <strong id="lastDoubleTapAt">--</strong>
+              </div>
+            </div>
+          </div>
+          <div class="recent-events">
+            <div class="recent-events-heading">
+              <h3>最近事件</h3>
+              <strong id="recentEventCount">0</strong>
+            </div>
             <ol id="eventList" class="event-list">
-              <li class="empty">等待按键或手势事件</li>
+              <li class="empty">等待六轴、按键或手势事件</li>
             </ol>
           </div>
         </section>

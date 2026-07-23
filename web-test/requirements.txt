@@ -1,3 +1,0 @@
-bleak==3.0.2
-fastapi
-uvicorn

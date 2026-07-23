@@ -16,13 +16,9 @@ import {
   stopSensorReport,
   toHex,
 } from "./ring-sdk.js";
-import { RingBridgeClient } from "./bridge-client.js";
 
 const $ = (id) => document.getElementById(id);
-const webClient = new RingWebClient();
-const bridgeClient = new RingBridgeClient();
-let client = webClient;
-let bridgeAvailable = false;
+const client = new RingWebClient();
 const connectedControls = [
   "disconnectButton",
   "infoButton",
@@ -39,18 +35,39 @@ let currentAudio = null;
 let consoleLines = [];
 let errorRecords = [];
 let toastTimer = null;
+let sensorHistory = [];
+const gestureStats = {
+  rotate_back: {
+    count: 0,
+    countId: "rotateBackCount",
+    timeId: "rotateBackTime",
+    lastId: "rotateBackLast",
+  },
+  rotate_front: {
+    count: 0,
+    countId: "rotateFrontCount",
+    timeId: "rotateFrontTime",
+    lastId: "rotateFrontLast",
+  },
+  wave: {
+    count: 0,
+    countId: "waveCount",
+    timeId: "waveTime",
+    lastId: "waveLast",
+  },
+};
 
 function setConnected(connected, deviceName = "") {
   $("statusDot").classList.toggle("connected", connected);
   $("statusText").textContent = connected ? "已连接" : "未连接";
   $("deviceName").textContent = connected ? deviceName || "未知 BLE 设备" : "等待选择设备";
   $("connectButton").disabled = connected;
-  $("scanButton").disabled = connected || !bridgeAvailable;
   for (const id of connectedControls) $(id).disabled = !connected;
   $("stopSensorButton").disabled = true;
   if (!connected) {
     $("sensorBadge").classList.remove("active");
     $("sensorBadge").textContent = "未开启";
+    resetSensorView();
   }
 }
 
@@ -74,6 +91,31 @@ function formatBytes(value) {
 function formatTime(seconds) {
   if (!seconds) return "--";
   return new Date(seconds * 1000).toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatClock(value) {
+  if (!value) return "--";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function resetSensorView() {
+  $("sensorRate").textContent = "采样率 --";
+  $("sensorRange").textContent = "量程 --";
+  $("accelValue").textContent = "-- / -- / --";
+  $("gyroValue").textContent = "-- / -- / --";
+  $("sequenceValue").textContent = "--";
+  $("sensorTimestamp").textContent = "--";
+  $("latestFrameText").textContent = "等待 0x0605 六轴帧";
+  $("lastReceiveAt").textContent = "--";
+  $("lastDoubleTapAt").textContent = "--";
+  sensorHistory = [];
+  renderSensorEvents();
+  for (const stat of Object.values(gestureStats)) {
+    stat.count = 0;
+    $(stat.countId).textContent = "0";
+    $(stat.timeId).textContent = "--";
+    $(stat.lastId).textContent = "--";
+  }
 }
 
 function setBusy(button, busy, busyText = "处理中...") {
@@ -236,17 +278,43 @@ function saveBlob(fileName, bytes, type = "application/octet-stream") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function addEvent(label, detail) {
+function pushSensorEvent(label, detail, occurredAt = Date.now()) {
+  sensorHistory.unshift({ label, detail, occurredAt });
+  sensorHistory = sensorHistory.slice(0, 30);
+  renderSensorEvents();
+}
+
+function renderSensorEvents() {
   const list = $("eventList");
-  list.querySelector(".empty")?.remove();
-  const item = document.createElement("li");
-  const text = document.createElement("span");
-  const time = document.createElement("time");
-  text.textContent = detail ? `${label} / ${detail}` : label;
-  time.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  item.append(text, time);
-  list.prepend(item);
-  while (list.children.length > 12) list.lastElementChild.remove();
+  $("recentEventCount").textContent = String(sensorHistory.length);
+  list.replaceChildren();
+  if (!sensorHistory.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "等待六轴、按键或手势事件";
+    list.append(empty);
+    return;
+  }
+  for (const record of sensorHistory) {
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    time.textContent = new Date(record.occurredAt).toLocaleTimeString("zh-CN", {
+      hour12: false,
+    });
+    const text = document.createElement("span");
+    text.textContent = record.detail ? `${record.label} ${record.detail}` : record.label;
+    item.append(time, text);
+    list.append(item);
+  }
+}
+
+function recordGesture(gestureName, timestampMs) {
+  const stat = gestureStats[gestureName];
+  if (!stat) return;
+  stat.count += 1;
+  $(stat.countId).textContent = String(stat.count);
+  $(stat.timeId).textContent = formatClock(Date.now());
+  $(stat.lastId).textContent = `${timestampMs} ms`;
 }
 
 function handlePacket(packet) {
@@ -257,13 +325,23 @@ function handlePacket(packet) {
       if (!sample) return;
       $("accelValue").textContent = `${sample.accelX} / ${sample.accelY} / ${sample.accelZ}`;
       $("gyroValue").textContent = `${sample.gyroX} / ${sample.gyroY} / ${sample.gyroZ}`;
-      $("sequenceValue").textContent = String(batch.sequenceStart + batch.frameCount - 1);
+      const latestSequence = batch.sequenceStart + batch.frameCount - 1;
+      $("sequenceValue").textContent = String(latestSequence);
       $("sensorTimestamp").textContent = `${sample.timestampMs} ms`;
+      const summary =
+        `seq=${batch.sequenceStart}~${latestSequence}, frames=${batch.frameCount}, ` +
+        `latest seq=${latestSequence}, uptime=${sample.timestampMs}ms, ` +
+        `accel=(${sample.accelX}, ${sample.accelY}, ${sample.accelZ}), ` +
+        `gyro=(${sample.gyroX}, ${sample.gyroY}, ${sample.gyroZ})`;
+      $("latestFrameText").textContent = summary;
+      $("lastReceiveAt").textContent = formatClock(Date.now());
+      pushSensorEvent("0605", summary);
       return;
     }
     if (packet.command === Commands.GESTURE) {
       const event = parseGestureEvent(packet.body);
-      addEvent("HMM 手势", `${event.gestureName} / ${event.timestampMs} ms`);
+      recordGesture(event.gestureName, event.timestampMs);
+      pushSensorEvent("0702", `${event.gestureName} / ${event.timestampMs} ms`);
       return;
     }
     const eventLabels = {
@@ -273,7 +351,13 @@ function handlePacket(packet) {
     };
     if (eventLabels[packet.command]) {
       const event = parseTimestampEvent(packet.body);
-      addEvent(eventLabels[packet.command], `${event.timestampMs} ms`);
+      if (packet.command === Commands.DOUBLE_TAP) {
+        $("lastDoubleTapAt").textContent = formatClock(Date.now());
+      }
+      pushSensorEvent(
+        `0x${packet.command.toString(16).padStart(4, "0")}`,
+        `${eventLabels[packet.command]} / ${event.timestampMs} ms`,
+      );
     }
   } catch (error) {
     recordError(error, "主动事件解析");
@@ -282,7 +366,6 @@ function handlePacket(packet) {
 
 function bindClientEvents(target) {
   target.addEventListener("connected", ({ detail }) => {
-    if (target !== client) return;
     const identity =
       [detail.device.name, detail.device.address || detail.device.id].filter(Boolean).join(" / ") ||
       "未知 BLE 设备";
@@ -292,27 +375,24 @@ function bindClientEvents(target) {
   });
 
   target.addEventListener("disconnected", () => {
-    if (target !== client) return;
     setConnected(false);
     logSystem("BLE 已断开");
     showToast("戒指连接已断开", true);
   });
 
   target.addEventListener("wire", ({ detail }) => {
-    if (target !== client) return;
     appendConsole(detail.direction, detail.command, detail.bytes);
   });
 
   target.addEventListener("packet", ({ detail }) => {
-    if (target === client) handlePacket(detail);
+    handlePacket(detail);
   });
   target.addEventListener("error", ({ detail }) => {
-    if (target === client) recordError(detail.error, "BLE/协议接收");
+    recordError(detail.error, "BLE/协议接收");
   });
 }
 
-bindClientEvents(webClient);
-bindClientEvents(bridgeClient);
+bindClientEvents(client);
 
 window.addEventListener("error", (event) => {
   recordError(event.error || new Error(event.message), "浏览器未捕获异常");
@@ -323,10 +403,6 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 $("connectButton").addEventListener("click", async () => {
-  if ($("connectionMode").value === "bridge") {
-    await scanDevices();
-    return;
-  }
   const button = $("connectButton");
   setBusy(button, true, "选择设备...");
   try {
@@ -350,96 +426,6 @@ $("chunkSize").addEventListener("change", (event) => {
 $("timeSyncToggle").addEventListener("change", (event) => {
   client.autoTimeSync = event.target.checked;
   logSystem(`自动校时${client.autoTimeSync ? "已开启" : "已关闭"}`);
-});
-
-function renderNearbyDevices(devices) {
-  const list = $("nearbyList");
-  list.replaceChildren();
-  if (!devices.length) {
-    const empty = document.createElement("div");
-    empty.className = "nearby-empty";
-    empty.textContent = "没有发现广播目标服务的戒指。确认戒指正在广播并且未被其他设备连接。";
-    list.append(empty);
-    return;
-  }
-  for (const device of devices) {
-    const card = document.createElement("article");
-    card.className = "nearby-device";
-    const header = document.createElement("header");
-    const name = document.createElement("h3");
-    name.textContent = device.name || "Unknown";
-    const signal = document.createElement("span");
-    signal.className = "signal";
-    signal.textContent = device.rssi == null ? "RSSI --" : `RSSI ${device.rssi}`;
-    header.append(name, signal);
-
-    const address = document.createElement("code");
-    address.textContent = device.address;
-    const service = document.createElement("span");
-    service.className = "service-badge";
-    service.textContent = device.targetService
-      ? "广播含目标服务"
-      : device.nameMatchesRing
-        ? "名称匹配 ring"
-        : "未发现目标服务";
-    const button = document.createElement("button");
-    button.className = "button primary wide";
-    button.textContent = "连接设备";
-    button.addEventListener("click", async () => {
-      setBusy(button, true, "连接中（最长 20 秒）...");
-      try {
-        await bridgeClient.connect(device.address);
-      } catch (error) {
-        recordError(error, `连接 ${device.address}`);
-        showToast(error.message || "连接失败", true);
-      } finally {
-        setBusy(button, false);
-        button.disabled = bridgeClient.connected;
-      }
-    });
-    card.append(header, address, service, button);
-    list.append(card);
-  }
-}
-
-async function scanDevices() {
-  const button = $("scanButton");
-  setBusy(button, true, "扫描中...");
-  $("nearbyList").innerHTML = '<div class="nearby-empty">正在扫描附近 BLE 广播...</div>';
-  try {
-    const devices = await bridgeClient.scan({
-      timeoutS: 5,
-      targetOnly: $("targetOnlyToggle").checked,
-    });
-    renderNearbyDevices(devices);
-    logSystem(`BLE 扫描完成，发现 ${devices.length} 个设备`);
-  } catch (error) {
-    recordError(error, "扫描附近设备");
-    renderNearbyDevices([]);
-    showToast(error.message || "扫描失败", true);
-  } finally {
-    setBusy(button, false);
-  }
-}
-
-function updateConnectionMode() {
-  const mode = $("connectionMode").value;
-  client = mode === "bridge" ? bridgeClient : webClient;
-  $("nearbyPanel").hidden = mode !== "bridge";
-  $("chunkSize").disabled = mode === "bridge";
-  $("timeSyncToggle").disabled = mode === "bridge";
-  $("browserWarning").hidden = mode !== "web" || Boolean(navigator.bluetooth);
-  const button = $("connectButton");
-  button.textContent = mode === "bridge" ? "扫描设备" : "连接戒指";
-  button.dataset.label = button.textContent;
-  setConnected(client.connected, client.device?.name || client.device?.address || "");
-  logSystem(`连接方式切换为${mode === "bridge" ? "本地 Python 桥接" : "浏览器 Web Bluetooth"}`);
-}
-
-$("scanButton").addEventListener("click", scanDevices);
-$("connectionMode").addEventListener("change", async () => {
-  if (client.connected) await client.disconnect();
-  updateConnectionMode();
 });
 
 $("infoButton").addEventListener("click", () =>
@@ -622,23 +608,14 @@ $("copyErrorsButton").addEventListener("click", async () => {
   }
 });
 
-async function initialise() {
+function initialise() {
   setConnected(false);
   renderErrors();
-  bridgeAvailable = await RingBridgeClient.available();
-  const bridgeOption = $("connectionMode").querySelector('option[value="bridge"]');
-  if (!bridgeAvailable) {
-    bridgeOption.disabled = true;
-    $("connectionMode").value = "web";
-    $("bridgeHint").textContent =
-      "本地桥接服务未运行，当前只能使用浏览器 Web Bluetooth 直连。";
-    logSystem("未检测到 Python BLE 桥接服务，使用浏览器直连模式");
-  } else {
-    $("connectionMode").value = "bridge";
-    logSystem("Python BLE 桥接服务已就绪，可扫描名称、MAC 和 RSSI");
-  }
-  updateConnectionMode();
+  resetSensorView();
+  $("browserWarning").hidden = Boolean(navigator.bluetooth);
+  client.writeChunkSize = Number($("chunkSize").value);
+  client.autoTimeSync = $("timeSyncToggle").checked;
   logSystem("Ring Sound Web Lab ready / protocol v4");
 }
 
-initialise().catch((error) => recordError(error, "页面初始化"));
+initialise();

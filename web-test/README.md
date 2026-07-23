@@ -1,40 +1,27 @@
 # Ring Sound Web Lab
 
-语音戒指测试页，支持两种连接方式：
-
-- 本地 Python 桥接：使用 `bleak` 扫描，可显示广播名称、真实 MAC 地址、RSSI 和服务 UUID。
-- 浏览器直连：使用 Web Bluetooth，不需要后端，但浏览器不会暴露真实 MAC 和扫描 RSSI。
+语音戒指 Web Bluetooth 测试页。页面由浏览器直接连接戒指，不需要 Python 后端。
 
 ## 启动
 
-安装 Python 依赖：
+在目录中启动任意静态文件服务器，例如：
 
 ```powershell
 cd F:\ring_sound_SDK\web-test
-python -m pip install -r requirements.txt
+python -m http.server 8765
 ```
 
-启动 BLE 桥接服务：
-
-```powershell
-python backend.py
-```
-
-打开：
+使用桌面 Chrome 或 Edge 打开：
 
 ```text
 http://localhost:8765
 ```
 
-默认使用“本地桥接”模式。点击“扫描 5 秒”后，页面会列出附近戒指的名称、MAC 和
-RSSI，选择目标设备即可连接。
-
-如需纯浏览器连接，可以把“连接方式”切换为“浏览器直连”。
+点击“连接戒指”，在浏览器设备选择器中选择名称以 `ring` 或 `Ring` 开头的设备。
 
 ## 当前功能
 
-- BLE/NUS 扫描、连接和断开
-- 广播名称、MAC 地址、RSSI 和目标服务显示
+- Web Bluetooth BLE/NUS 连接和断开
 - v4 协议包重组与 CRC16 校验
 - 自动响应 `0x0401` 校时请求
 - 系统信息和设备存储
@@ -54,7 +41,7 @@ RSSI，选择目标设备即可连接。
 - 自动录音接收和指定录音下载不能同时运行，它们会消费同一个 `0x0505` 数据流。
 - 浏览器保存的是设备原始长度前缀 Speex `.bin`。需要 WAV 时，使用上级目录的
   `ring_sound.py audio-decode` 或其他 ffmpeg 解码流程。
-- 浏览器直连模式下，20 字节写入分片兼容性最好。Python 桥接模式会由 bleak 处理分片。
+- 20 字节写入分片兼容性最好。
 
 ## 测试
 
